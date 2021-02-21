@@ -375,6 +375,58 @@ describe(Support.getTestDialectTeaser('Include'), () => {
     /*
      * one-to-many
      */
+    it('supports both one-to-many association and orders-limits by another association', async function() {
+      await this.sequelize.sync({ force: true });
+
+      const [users, posts, comments] = await Promise.all([
+        this.User.bulkCreate(build('user0', 'user1', 'user2', 'user3')),
+        this.Post.bulkCreate(build('post0', 'post1', 'post2', 'post3')),
+        this.Comment.bulkCreate(build('comment0', 'comment1', 'comment2', 'comment3'))
+      ]);
+
+      // user3 -> post0 -> comment0
+      // user2 -> post1 -> comment1
+      // user1 -> post2 -> comment2
+      // user0 -> post3 -> comment3
+
+      await Promise.all([
+        posts[0].addComment(comments[0]),
+        posts[1].addComment(comments[1]),
+        posts[2].addComment(comments[2]),
+        posts[3].addComment(comments[3])
+      ]);
+      await Promise.all([
+        users[3].addPost(posts[0]),
+        users[2].addPost(posts[1]),
+        users[1].addPost(posts[2]),
+        users[0].addPost(posts[3])
+      ]);
+
+      // I want to fetch the 2nd post ordered by user
+      const result = await this.Post.findAll({
+        include: [this.Comment, { model: this.User }],
+        order: [[{ model: this.User }, 'name', 'ASC']],
+        limit: 1, offset: 1, logging: console.log
+      });
+
+      /*
+      Geterated sql is wrong as the Post should be first joined with Users and then LIMIT/OFFSET should apply
+
+      SELECT "Post".*, "Comments"."name" AS "Comments.name", "Comments"."PostName" AS "Comments.PostName", "User"."name" AS "User.name"
+      FROM (
+            SELECT "Post"."name", "Post"."UserName" FROM "Posts" AS "Post" LIMIT 1 OFFSET 1
+            ) AS "Post"
+      LEFT OUTER JOIN "Comments" AS "Comments" ON "Post"."name" = "Comments"."PostName"
+      LEFT OUTER JOIN "Users" AS "User" ON "Post"."UserName" = "User"."name"
+      ORDER BY "User"."name";
+      */
+
+      expect(result.length).to.equal(1);
+      // should be user1 which is connected to post2
+      // sometimes it passes but mostly not. It depends how the posts (in the inner select) are ordered without explicit ORDER BY
+      expect(result[0].name).to.equal('post2');
+    });
+
     it('supports required one-to-many association', async function() {
       await this.sequelize.sync({ force: true });
 
